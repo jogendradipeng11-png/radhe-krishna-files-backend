@@ -115,8 +115,9 @@ app.use(cors({
 app.options("*", cors());
 
 // Locate this block in your index.js file on GitHub and update it:
+// Locate and update this block inside your index.js file on GitHub:
 const s3 = new S3Client({
-  region: "ap-southeast-1", // FIXED: Locked to your exact IDrive bucket region
+  region: "us-west-1", // FIXED: Matches your exact IDrive US West region
   endpoint: process.env.IDRIVE_ENDPOINT,
   credentials: {
     accessKeyId: process.env.IDRIVE_ACCESS_KEY_ID,
