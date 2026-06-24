@@ -2,9 +2,18 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 
-const USERS_FILE = path.join(__dirname, 'users.json');
+// Target the Render persistent disk path in production, fallback to local directory in development
+const USERS_FILE = process.env.NODE_ENV === 'production'
+  ? '/opt/render/project/src/data/users.json'
+  : path.join(__dirname, 'users.json');
 
-// Default admin: username "k", password "r"
+// Ensure the directory exists
+const dir = path.dirname(USERS_FILE);
+if (!fs.existsSync(dir)) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+// Default master admin login backup rules
 const initialUsers = [
   {
     id: 1,
@@ -16,24 +25,24 @@ const initialUsers = [
 ];
 
 let users = [];
+
 if (fs.existsSync(USERS_FILE)) {
   try {
     users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
   } catch (err) {
-    console.error("Error reading users.json → using default admin:", err.message);
+    console.error("Error reading storage file -> using admin fallback:", err.message);
     users = initialUsers;
   }
 } else {
   users = initialUsers;
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
-  console.log("Created users.json with default admin (k / r)");
 }
 
 function saveUsers() {
   try {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
   } catch (err) {
-    console.error("Failed to save users.json:", err.message);
+    console.error("Failed to write user to persistent path:", err.message);
   }
 }
 
