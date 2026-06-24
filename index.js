@@ -3,7 +3,6 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
 const bcrypt = require("bcryptjs");
 
 const {
@@ -21,73 +20,7 @@ const PORT = process.env.PORT || 10000;
 app.use(express.json());
 
 // ============================
-// LOCAL USER STORAGE MANAGEMENT
-// ============================
-const USERS_FILE = process.env.NODE_ENV === 'production'
-  ? '/opt/render/project/src/data/users.json'
-  : path.join(__dirname, 'users.json');
-
-// Ensure database folder structure exists natively on Render mount path
-const dir = path.dirname(USERS_FILE);
-if (!fs.existsSync(dir)) {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-const initialUsers = [
-  {
-    id: 1,
-    username: "k",
-    password: bcrypt.hashSync("r", 10),
-    role: "admin",
-    createdAt: new Date().toISOString()
-  }
-];
-
-let users = [];
-if (fs.existsSync(USERS_FILE)) {
-  try {
-    users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-  } catch (err) {
-    users = initialUsers;
-  }
-} else {
-  users = initialUsers;
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
-}
-
-function saveUsers() {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
-  } catch (err) {
-    console.error("Failed to write to persistent data volume:", err.message);
-  }
-}
-
-function findUser(username) {
-  return users.find(u => u.username.toLowerCase() === username.toLowerCase());
-}
-
-async function addUser(username, password) {
-  if (findUser(username)) throw new Error("Username already taken");
-  if (username.length < 3) throw new Error("Username must be at least 3 characters");
-  if (password.length < 4) throw new Error("Password must be at least 4 characters");
-
-  const hashed = await bcrypt.hash(password, 10);
-  const newUser = {
-    id: users.length + 1,
-    username,
-    password: hashed,
-    role: "user",
-    createdAt: new Date().toISOString()
-  };
-
-  users.push(newUser);
-  saveUsers();
-  return newUser;
-}
-
-// ============================
-// CORS & CORE CONFIGURATIONS
+// CORS CONFIGURATIONS
 // ============================
 const allowedOrigins = [
   "https://jogendradipeng11-png.github.io",
@@ -114,10 +47,11 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-// Locate this block in your index.js file on GitHub and update it:
-// Locate and update this block inside your index.js file on GitHub:
+// ============================
+// IDRIVE S3 CLIENT
+// ============================
 const s3 = new S3Client({
-  region: "us-west-1", // FIXED: Matches your exact IDrive US West region
+  region: "us-west-1", // Locked to your exact IDrive region
   endpoint: process.env.IDRIVE_ENDPOINT,
   credentials: {
     accessKeyId: process.env.IDRIVE_ACCESS_KEY_ID,
@@ -132,6 +66,82 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
 });
+
+// ============================
+// CLOUD PERSISTENT USER MANAGEMENT (NO DISK REQUIRED)
+// ============================
+const USER_DATA_KEY = "system_data/users.json";
+let cachedUsers = [];
+
+// Back up master admin profile
+const defaultAdmin = {
+  id: 1,
+  username: "k",
+  password: bcrypt.hashSync("r", 10),
+  role: "admin",
+  createdAt: new Date().toISOString()
+};
+
+// Pull accounts directly from IDrive Bucket when server boots up
+async function loadUsersFromCloud() {
+  try {
+    const data = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: USER_DATA_KEY }));
+    const streamToString = (stream) =>
+      new Promise((resolve, reject) => {
+        const chunks = [];
+        stream.on("data", (chunk) => chunks.push(chunk));
+        stream.on("error", reject);
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      });
+    const bodyContents = await streamToString(data.Body);
+    cachedUsers = JSON.parse(bodyContents);
+    console.log("Users synced successfully from IDrive storage!");
+  } catch (err) {
+    console.log("No cloud data file found yet. Initializing default admin profile...");
+    cachedUsers = [defaultAdmin];
+    await saveUsersToCloud();
+  }
+}
+
+// Sync back to IDrive immediately during account generation
+async function saveUsersToCloud() {
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: USER_DATA_KEY,
+      Body: JSON.stringify(cachedUsers, null, 2),
+      ContentType: "application/json"
+    }));
+  } catch (err) {
+    console.error("Failed to back up user db file to cloud bucket:", err.message);
+  }
+}
+
+function findUser(username) {
+  return cachedUsers.find(u => u.username.toLowerCase() === username.toLowerCase());
+}
+
+async function addUser(username, password) {
+  if (findUser(username)) throw new Error("Username already taken");
+  if (username.length < 3) throw new Error("Username must be at least 3 characters");
+  if (password.length < 4) throw new Error("Password must be at least 4 characters");
+
+  const hashed = await bcrypt.hash(password, 10);
+  const newUser = {
+    id: cachedUsers.length + 1,
+    username,
+    password: hashed,
+    role: "user",
+    createdAt: new Date().toISOString()
+  };
+
+  cachedUsers.push(newUser);
+  await saveUsersToCloud();
+  return newUser;
+}
+
+// Sync users out of storage at container runtime boot cycle
+loadUsersFromCloud();
 
 const requireLogin = (req, res, next) => {
   const username = req.headers["x-user"];
@@ -230,5 +240,5 @@ app.delete("/file/:name", requireLogin, async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log("Single-file deployment container online on target port:", PORT);
+  console.log("Cloud database integration active on port:", PORT);
 });
