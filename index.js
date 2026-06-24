@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 const bcrypt = require("bcryptjs");
 
 const {
@@ -13,14 +14,81 @@ const {
   DeleteObjectCommand
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-const { findUser, addUser } = require("./users.js");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(express.json());
 
-// CORS mapping configurations
+// ============================
+// LOCAL USER STORAGE MANAGEMENT
+// ============================
+const USERS_FILE = process.env.NODE_ENV === 'production'
+  ? '/opt/render/project/src/data/users.json'
+  : path.join(__dirname, 'users.json');
+
+// Ensure database folder structure exists natively on Render mount path
+const dir = path.dirname(USERS_FILE);
+if (!fs.existsSync(dir)) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+const initialUsers = [
+  {
+    id: 1,
+    username: "k",
+    password: bcrypt.hashSync("r", 10),
+    role: "admin",
+    createdAt: new Date().toISOString()
+  }
+];
+
+let users = [];
+if (fs.existsSync(USERS_FILE)) {
+  try {
+    users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  } catch (err) {
+    users = initialUsers;
+  }
+} else {
+  users = initialUsers;
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function saveUsers() {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+  } catch (err) {
+    console.error("Failed to write to persistent data volume:", err.message);
+  }
+}
+
+function findUser(username) {
+  return users.find(u => u.username.toLowerCase() === username.toLowerCase());
+}
+
+async function addUser(username, password) {
+  if (findUser(username)) throw new Error("Username already taken");
+  if (username.length < 3) throw new Error("Username must be at least 3 characters");
+  if (password.length < 4) throw new Error("Password must be at least 4 characters");
+
+  const hashed = await bcrypt.hash(password, 10);
+  const newUser = {
+    id: users.length + 1,
+    username,
+    password: hashed,
+    role: "user",
+    createdAt: new Date().toISOString()
+  };
+
+  users.push(newUser);
+  saveUsers();
+  return newUser;
+}
+
+// ============================
+// CORS & CORE CONFIGURATIONS
+// ============================
 const allowedOrigins = [
   "https://jogendradipeng11-png.github.io",
   "http://localhost:8080",
@@ -39,14 +107,13 @@ app.use(cors({
     ) {
       callback(null, true);
     } else {
-      callback(new Error("CORS Policy Violation"));
+      callback(new Error("CORS Policy Blocking"));
     }
   },
   credentials: true
 }));
 app.options("*", cors());
 
-// IDrive Object S3 Client Initialization Engine
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.IDRIVE_ENDPOINT,
@@ -61,25 +128,23 @@ const BUCKET = process.env.IDRIVE_BUCKET_NAME;
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 } // Maximum binary upload cap size: 25MB
+  limits: { fileSize: 25 * 1024 * 1024 }
 });
 
-// Custom Header Authorization Middleware
 const requireLogin = (req, res, next) => {
   const username = req.headers["x-user"];
-  if (!username) {
-    return res.status(401).json({ success: false, error: "Access Denied: Please log in" });
-  }
+  if (!username) return res.status(401).json({ success: false, error: "Login required" });
   req.currentUser = username;
   next();
 };
 
-// Root status confirmation route
+// ============================
+// EXPRESS API ROUTE ENDPOINTS
+// ============================
 app.get("/", (req, res) => {
-  res.json({ message: "Radhe Krishna Backend Running" });
+  res.json({ message: "Radhe Krishna Backend Running Seamlessly ✨" });
 });
 
-// Register User Account
 app.post("/register", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -90,21 +155,19 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// User Validation Login Access Route
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   const user = findUser(username);
-  if (!user) return res.status(401).json({ success: false, error: "Invalid identity credentials" });
+  if (!user) return res.status(401).json({ success: false, error: "Invalid username" });
 
   const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(401).json({ success: false, error: "Incorrect password selection" });
+  if (!ok) return res.status(401).json({ success: false, error: "Incorrect password" });
 
   res.json({ success: true, username: user.username });
 });
 
-// Upload Document Interface Execution Block
 app.post("/upload", requireLogin, upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ success: false, error: "No file content detected" });
+  if (!req.file) return res.status(400).json({ success: false, error: "No file chosen" });
 
   const username = req.currentUser;
   const key = `${username}/${Date.now()}-${req.file.originalname.replace(/\s+/g, "_")}`;
@@ -118,12 +181,10 @@ app.post("/upload", requireLogin, upload.single("file"), async (req, res) => {
     }));
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Object upload mapping failed" });
+    res.status(500).json({ success: false, error: "S3 transmission error" });
   }
 });
 
-// Clean File-Listing Pipeline Loader
 app.get("/files", requireLogin, async (req, res) => {
   const prefix = req.currentUser + "/";
   try {
@@ -132,43 +193,40 @@ app.get("/files", requireLogin, async (req, res) => {
       Prefix: prefix
     }));
 
-    // Drops raw folder objects so they don't corrupt the frontend layout list
     const files = (data.Contents || [])
       .filter(f => f.Key !== prefix && f.Size > 0)
       .map(f => path.basename(f.Key));
 
     res.json(files);
   } catch (err) {
-    res.status(500).json({ success: false, error: "Failed to list documents from IDrive" });
+    res.status(500).json({ success: false, error: "IDrive storage tracking failed" });
   }
 });
 
-// Secure Temporary Signed Link Fetch Pipeline
 app.get("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
     const url = await getSignedUrl(
       s3,
       new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-      { expiresIn: 3600 } // URL link breaks natively after 1 hour for extreme file privacy
+      { expiresIn: 3600 }
     );
     res.json({ success: true, url });
   } catch (err) {
-    res.status(404).json({ success: false, error: "Target object key data not found" });
+    res.status(404).json({ success: false, error: "File not found" });
   }
 });
 
-// Delete Storage File Node Target Block
 app.delete("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: "Object removal failed" });
+    res.status(500).json({ success: false, error: "Object destruction failed" });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("Server active on port connection mapping node:", PORT);
+  console.log("Single-file deployment container online on target port:", PORT);
 });
