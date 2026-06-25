@@ -50,14 +50,20 @@ app.options("*", cors());
 // ============================
 // IDRIVE S3 CLIENT
 // ============================
+// Locate and replace this exact configuration block inside your index.js file:
 const s3 = new S3Client({
-  region: "auto", // FIXED: Automatically handles your Oregon data routing
+  region: "auto", 
   endpoint: process.env.IDRIVE_ENDPOINT,
   credentials: {
     accessKeyId: process.env.IDRIVE_ACCESS_KEY_ID,
     secretAccessKey: process.env.IDRIVE_SECRET_ACCESS_KEY
   },
-  forcePathStyle: true
+  forcePathStyle: true,
+  // FIXED: Adds a high-performance socket timeout rule for slow mobile connections
+  requestHandler: {
+    connectionTimeout: 300000, // 5 minutes connection limit
+    socketTimeout: 300000     // 5 minutes data streaming limit
+  }
 });
 
 const BUCKET = process.env.IDRIVE_BUCKET_NAME;
