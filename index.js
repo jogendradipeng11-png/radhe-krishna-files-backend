@@ -206,12 +206,11 @@ app.get("/files", requireLogin, async (req, res) => {
       Prefix: prefix
     }));
 
-    // Returns an object array containing the name and creation timestamp
     const files = (data.Contents || [])
       .filter(f => f.Key !== prefix && f.Size > 0)
       .map(f => ({
         name: path.basename(f.Key),
-        uploadedAt: f.LastModified // Built-in S3 upload timestamp
+        uploadedAt: f.LastModified
       }));
 
     res.json(files);
@@ -220,17 +219,14 @@ app.get("/files", requireLogin, async (req, res) => {
   }
 });
 
-app.get("/file/:name", requireLogin, async (req, res) => {
-  const key = `${req.currentUser}/${req.params.name}`;
-  try {
-    c// DOWNLOAD / GENERATE PRESIGNED URL
+// DOWNLOAD / GENERATE PRESIGNED URL
 app.get("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
     const url = await getSignedUrl(
       s3,
       new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-      { expiresIn: 60 } // Change this to 60 for 1 minute, 1800 for 30 minutes, or 86400 for 24 hours
+      { expiresIn: 3600 } // Link stays valid for 1 hour
     );
     res.json({ success: true, url });
   } catch (err) {
@@ -238,6 +234,7 @@ app.get("/file/:name", requireLogin, async (req, res) => {
   }
 });
 
+// DELETE FILE
 app.delete("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
