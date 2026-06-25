@@ -229,11 +229,12 @@ app.get("/files", requireLogin, async (req, res) => {
 app.get("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
-    const url = await getSignedUrl(
-      s3,
-      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-      { expiresIn: 3600 } // Link stays valid for 1 hour
-    );
+    // Look for this block around line 175 in your index.js and change the number:
+const url = await getSignedUrl(
+  s3,
+  new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+  { expiresIn: 86400 } // Extension: Link stays alive for a full day!
+);
     res.json({ success: true, url });
   } catch (err) {
     res.status(404).json({ success: false, error: "File not found" });
