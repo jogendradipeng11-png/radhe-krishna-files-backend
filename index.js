@@ -51,7 +51,7 @@ app.options("*", cors());
 // IDRIVE S3 CLIENT
 // ============================
 const s3 = new S3Client({
-  region: "us-west-1", // Locked to your exact IDrive region
+  region: "auto", // FIXED: Automatically handles your Oregon data routing
   endpoint: process.env.IDRIVE_ENDPOINT,
   credentials: {
     accessKeyId: process.env.IDRIVE_ACCESS_KEY_ID,
