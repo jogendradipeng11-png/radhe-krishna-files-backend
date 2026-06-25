@@ -197,6 +197,7 @@ app.post("/upload", requireLogin, upload.single("file"), async (req, res) => {
   }
 });
 
+// LIST FILES WITH TIME LOGS
 app.get("/files", requireLogin, async (req, res) => {
   const prefix = req.currentUser + "/";
   try {
@@ -205,23 +206,31 @@ app.get("/files", requireLogin, async (req, res) => {
       Prefix: prefix
     }));
 
+    // Returns an object array containing the name and creation timestamp
     const files = (data.Contents || [])
       .filter(f => f.Key !== prefix && f.Size > 0)
-      .map(f => path.basename(f.Key));
+      .map(f => ({
+        name: path.basename(f.Key),
+        uploadedAt: f.LastModified // Built-in S3 upload timestamp
+      }));
 
     res.json(files);
   } catch (err) {
-    res.status(500).json({ success: false, error: "IDrive storage tracking failed" });
+    res.status(500).json({ success: false, error: "Tracking failed" });
   }
 });
 
 app.get("/file/:name", requireLogin, async (req, res) => {
   const key = `${req.currentUser}/${req.params.name}`;
   try {
+    c// DOWNLOAD / GENERATE PRESIGNED URL
+app.get("/file/:name", requireLogin, async (req, res) => {
+  const key = `${req.currentUser}/${req.params.name}`;
+  try {
     const url = await getSignedUrl(
       s3,
       new GetObjectCommand({ Bucket: BUCKET, Key: key }),
-      { expiresIn: 3600 }
+      { expiresIn: 60 } // Change this to 60 for 1 minute, 1800 for 30 minutes, or 86400 for 24 hours
     );
     res.json({ success: true, url });
   } catch (err) {
